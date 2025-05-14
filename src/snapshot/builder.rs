@@ -226,7 +226,7 @@ impl SnapshotBuilder<'_> {
                             .data::<ReflectFromReflect>()
                             .and_then(|fr| fr.from_reflect(reflect.as_partial_reflect()))
                             .map_or_else(
-                                || reflect.clone_value(),
+                                || reflect.to_dynamic(),
                                 PartialReflect::into_partial_reflect,
                             );
 
@@ -253,8 +253,8 @@ impl SnapshotBuilder<'_> {
 
     /// Extract all entities from the builder’s [`World`].
     pub fn extract_all_entities(self) -> Self {
-        let entites = self.world.iter_entities().map(|e| e.id());
-        self.extract_entities(entites)
+        let entities = self.world.iter_entities().map(|e| e.id());
+        self.extract_entities(entities)
     }
 
     /// Extract all entities with a custom extraction function.
@@ -376,13 +376,13 @@ impl SnapshotBuilder<'_> {
                 }
             })
             .filter_map(|r| {
-                let reflect = r.data::<ReflectResource>()?.reflect(self.world)?;
+                let reflect = r.data::<ReflectResource>()?.reflect(self.world).ok()?;
 
                 let reflect = r
                     .data::<ReflectFromReflect>()
                     .and_then(|fr| fr.from_reflect(reflect.as_partial_reflect()))
                     .map_or_else(
-                        || reflect.clone_value(),
+                        || reflect.to_dynamic(),
                         PartialReflect::into_partial_reflect,
                     );
 

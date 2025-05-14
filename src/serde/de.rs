@@ -11,8 +11,8 @@ use bevy::{
         TypeRegistry,
     },
     scene::DynamicEntity,
-    utils::HashSet,
 };
+use bevy::platform::collections::HashSet;
 use serde::{
     de::{
         DeserializeSeed,

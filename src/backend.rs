@@ -1,6 +1,6 @@
 //! [`Backend`] acts as an interface between [`Format`] and storage for persisting values.
 
-use bevy::utils::{
+use bevy::tasks::{
     ConditionalSend,
     ConditionalSendFuture,
 };
@@ -106,9 +106,7 @@ mod desktop {
             let mut buf = Vec::new();
 
             F::serialize(&mut buf, value)?;
-
             let mut file = File::create(path).await?;
-
             Ok(file.write_all(&buf).await?)
         }
 
