@@ -44,6 +44,6 @@ uuid = { version = "1.16", features = ["js"] }
 
 [dev-dependencies]
 bevy = { path = "../../bevy_engine" }
-bevy-inspector-egui = "0.31.0"
+bevy-inspector-egui = { path = "../bevy_inspector_egui/crates/bevy-inspector-egui" }
 ron = "0.10.1"
 io-adapters = "0.4"
