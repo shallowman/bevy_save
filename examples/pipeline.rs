@@ -2,10 +2,13 @@
 
 use bevy::{
     ecs::entity::EntityHashMap,
+    platform::collections::HashMap,
     prelude::*,
-    utils::HashMap,
 };
-use bevy_inspector_egui::quick::WorldInspectorPlugin;
+use bevy_inspector_egui::{
+    bevy_egui::EguiPlugin,
+    quick::WorldInspectorPlugin,
+};
 use bevy_save::prelude::*;
 
 #[derive(Clone, Debug, Default, Resource, Reflect)]
@@ -59,6 +62,7 @@ fn setup_world(mut commands: Commands) {
     };
 
     commands.insert_resource(map);
+    commands.spawn(Camera2d);
 }
 
 fn display_world(keys: Res<ButtonInput<KeyCode>>, map: Res<TileMap>, tiles: Query<&Tile>) {
@@ -89,19 +93,28 @@ fn handle_despawn_input(
 fn handle_save_input(world: &mut World) {
     let keys = world.resource::<ButtonInput<KeyCode>>();
 
-    // Using DebugPipeline as the argument for save/load, we can save locally with JSON.
-
     if keys.just_released(KeyCode::Enter) {
+        info!("Saving data");
+
         // Save every tile individually.
-        for position in world.resource::<TileMap>().map.keys() {
+        let positions = world
+            .resource::<TileMap>()
+            .map
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+
+        for position in positions {
             world
-                .save(TilePipeline::new(*position))
+                .save(&TilePipeline::new(position))
                 .expect("Failed to save");
         }
     } else if keys.just_released(KeyCode::Backspace) {
+        info!("Loading data");
+
         // For ease of implementation, let's just load the origin.
         world
-            .load(TilePipeline::new(TilePosition { x: 0, y: 0 }))
+            .load(&TilePipeline::new(TilePosition { x: 0, y: 0 }))
             .expect("Failed to load");
     }
 }
@@ -130,7 +143,7 @@ impl Pipeline for TilePipeline {
         &self.key
     }
 
-    fn capture(&self, builder: SnapshotBuilder) -> Snapshot {
+    fn capture(&self, builder: BuilderRef) -> Snapshot {
         let world = builder.world();
 
         builder
@@ -148,7 +161,7 @@ impl Pipeline for TilePipeline {
         let mut mapper = EntityHashMap::default();
 
         world.resource_scope(|world, mut tiles: Mut<TileMap>| {
-            for saved in &snapshot.entities {
+            for saved in snapshot.entities() {
                 if let Some(existing) = tiles.map.get(&self.position) {
                     mapper.insert(saved.entity, *existing);
                 } else {
@@ -171,17 +184,14 @@ fn main() {
                 ..default()
             }),
             // Inspector
+            EguiPlugin::default(),
             WorldInspectorPlugin::new(),
             // Bevy Save
             SavePlugins,
         ))
         // Register our types
         .register_type::<TileMap>()
-        .register_type::<TilePosition>()
         .register_type::<Tile>()
-        // Bevy's reflection requires we register each generic instance of a type individually
-        // Note that we only need to register it in the AppTypeRegistry for it to be included in saves
-        .register_type::<HashMap<TilePosition, Entity>>()
         // Resources
         .init_resource::<TileMap>()
         // Systems

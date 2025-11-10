@@ -1,12 +1,18 @@
 //! [`Backend`] acts as an interface between [`Format`] and storage for persisting values.
-
-use bevy::tasks::{
-    ConditionalSend,
-    ConditionalSendFuture,
+use bevy::{
+    app::App,
+    ecs::{
+        resource::Resource,
+        world::FromWorld,
+    },
+    tasks::{
+        ConditionalSend,
+        ConditionalSendFuture,
+    },
 };
 use serde::{
-    de::DeserializeSeed,
     Serialize,
+    de::DeserializeSeed,
 };
 
 use crate::{
@@ -14,12 +20,17 @@ use crate::{
     prelude::*,
 };
 
+/// Resource for retaining backend state
+#[derive(Resource)]
+pub struct AppBackend<B>(pub B);
+
 /// Interface between the [`Format`] and the disk or other storage.
 ///
 /// # Implementation
 /// The preferred style for implementing this method is an `async fn` returning a result.
+///
 /// ```
-/// # use bevy::utils::ConditionalSend;
+/// # use bevy::tasks::ConditionalSend;
 /// # use serde::{de::DeserializeSeed, Serialize};
 /// # use bevy_save::prelude::*;
 /// #
@@ -71,19 +82,49 @@ pub trait Backend<K> {
     ) -> impl ConditionalSendFuture<Output = Result<T, Error>>;
 }
 
+/// [`App`] extension trait for [`Backend`]-related methods
+pub trait AppBackendExt {
+    /// Initializes the [`Backend`] using default values
+    fn insert_backend<B, K>(&mut self, backend: B) -> &mut Self
+    where
+        B: Backend<K> + Send + Sync + 'static;
+
+    /// Initializes the [`Backend`] using default values
+    fn init_backend<B, K>(&mut self) -> &mut Self
+    where
+        B: FromWorld + Backend<K> + Send + Sync + 'static;
+}
+
+impl AppBackendExt for App {
+    fn insert_backend<B, K>(&mut self, backend: B) -> &mut Self
+    where
+        B: Backend<K> + Send + Sync + 'static,
+    {
+        self.insert_resource(AppBackend(backend))
+    }
+
+    fn init_backend<B, K>(&mut self) -> &mut Self
+    where
+        B: FromWorld + Backend<K> + Send + Sync + 'static,
+    {
+        let backend = B::from_world(self.world_mut());
+        self.insert_backend(backend)
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod desktop {
-    use async_std::{
+    use bevy::prelude::*;
+    use smol::{
         fs::{
-            create_dir_all,
             File,
+            create_dir_all,
         },
         io::{
-            ReadExt,
-            WriteExt,
+            AsyncReadExt,
+            AsyncWriteExt,
         },
     };
-    use bevy::prelude::*;
 
     #[allow(clippy::wildcard_imports)]
     use super::*;
@@ -93,7 +134,7 @@ mod desktop {
     /// Each name corresponds to an individual file on the disk.
     ///
     /// Files are stored in [`SAVE_DIR`].
-    #[derive(Default, Resource)]
+    #[derive(Default)]
     pub struct FileIO;
 
     impl<K: std::fmt::Display + Send> Backend<K> for FileIO {
@@ -131,7 +172,7 @@ mod desktop {
     /// Each name corresponds to an individual file on the disk.
     ///
     /// Files are stored relative to the active path.
-    #[derive(Default, Resource)]
+    #[derive(Default)]
     pub struct DebugFileIO;
 
     impl<K: std::fmt::Display + Send> Backend<K> for DebugFileIO {
@@ -174,15 +215,14 @@ mod wasm {
     use bevy::prelude::*;
     use fragile::Fragile;
     use serde::{
-        de::DeserializeSeed,
         Serialize,
+        de::DeserializeSeed,
     };
     use web_sys::Storage;
 
     use crate::prelude::*;
 
     /// Simple `WebStorage` backend.
-    #[derive(Resource)]
     pub struct WebStorage {
         storage: Fragile<Storage>,
     }
@@ -201,8 +241,11 @@ mod wasm {
         }
     }
 
-    impl<'a> Backend<&'a str> for WebStorage {
-        async fn save<F: Format, T: Serialize>(&self, key: &str, value: &T) -> Result<(), Error> {
+    impl<K> Backend<K> for WebStorage
+    where
+        K: AsRef<str>,
+    {
+        async fn save<F: Format, T: Serialize>(&self, key: K, value: &T) -> Result<(), Error> {
             let mut buf: Vec<u8> = Vec::new();
 
             F::serialize(&mut buf, value)?;
@@ -210,7 +253,7 @@ mod wasm {
             self.storage
                 .get()
                 .set_item(
-                    &format!("{WORKSPACE}.{key}"),
+                    &format!("{WORKSPACE}.{}", key.as_ref()),
                     &serde_json::to_string(&buf).map_err(Error::saving)?,
                 )
                 .expect("Failed to save");
@@ -220,13 +263,13 @@ mod wasm {
 
         async fn load<F: Format, S: for<'de> DeserializeSeed<'de, Value = T>, T>(
             &self,
-            key: &str,
+            key: K,
             seed: S,
         ) -> Result<T, Error> {
             let value = self
                 .storage
                 .get()
-                .get_item(&format!("{WORKSPACE}.{key}"))
+                .get_item(&format!("{WORKSPACE}.{}", key.as_ref()))
                 .expect("Failed to load")
                 .ok_or(Error::custom("Invalid key"))?;
 

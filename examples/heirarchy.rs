@@ -1,5 +1,8 @@
 use bevy::prelude::*;
-use bevy_inspector_egui::quick::WorldInspectorPlugin;
+use bevy_inspector_egui::{
+    bevy_egui::EguiPlugin,
+    quick::WorldInspectorPlugin,
+};
 use bevy_save::prelude::*;
 
 #[derive(Component, Reflect, Default)]
@@ -17,12 +20,8 @@ fn setup(mut commands: Commands) {
             p.spawn(Head);
         });
 
-    // to reproduce the error, hit the following keys:
-    // P         - Print debug info about heads and check their parent exists
-    // ENTER     - Save
-    // R         - Reset, delete all player entities
-    // BACKSPACE - Load
-    // P         - Print head info <== head will have an invalid parent
+    commands.spawn(Camera2d);
+
     println!("Controls:");
     println!("P: to print debug info on `Head` entities and to validate their parent exists");
     println!("R: to recursively delete all `Player` entities");
@@ -42,7 +41,7 @@ impl Pipeline for HeirarchyPipeline {
         "examples/saves/heirarchy"
     }
 
-    fn capture(&self, builder: SnapshotBuilder) -> Snapshot {
+    fn capture(&self, builder: BuilderRef) -> Snapshot {
         builder
             .extract_entities_matching(|e| e.contains::<Player>() || e.contains::<Head>())
             .build()
@@ -60,11 +59,11 @@ fn interact(world: &mut World) {
     let keys = world.resource::<ButtonInput<KeyCode>>();
 
     if keys.just_released(KeyCode::Enter) {
-        info!("Save");
-        world.save(HeirarchyPipeline).expect("Failed to save");
+        info!("Saving data");
+        world.save(&HeirarchyPipeline).expect("Failed to save");
     } else if keys.just_released(KeyCode::Backspace) {
-        info!("Load");
-        world.load(HeirarchyPipeline).expect("Failed to load");
+        info!("Loading data");
+        world.load(&HeirarchyPipeline).expect("Failed to load");
     } else if keys.just_pressed(KeyCode::KeyE) {
         info!("Info");
         for entity in world.iter_entities() {
@@ -80,16 +79,16 @@ fn interact(world: &mut World) {
 
 fn handle_keys(
     keys: Res<ButtonInput<KeyCode>>,
-    head_query: Query<(Entity, &Parent)>,
+    head_query: Query<(Entity, &ChildOf)>,
     despawn_query: Query<Entity, With<Player>>,
     mut commands: Commands,
 ) {
     // Print head debug info, check that all heads have a valid parent
     if keys.just_released(KeyCode::KeyP) {
         println!("{} Heads", head_query.iter().len());
-        for (entity, parent) in &head_query {
-            println!("  Head {:?} has parent: {:?}", entity, parent.get());
-            if commands.get_entity(parent.get()).is_none() {
+        for (entity, child_of) in &head_query {
+            println!("  Head {:?} has parent: {:?}", entity, child_of.parent());
+            if commands.get_entity(child_of.parent()).is_err() {
                 println!("    X - Head parent does not exist!");
             } else {
                 println!("    Ok - Head parent exists, all good")
@@ -100,7 +99,7 @@ fn handle_keys(
     // Reset, delete all entities
     if keys.just_released(KeyCode::KeyR) {
         for entity in &despawn_query {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).despawn();
         }
     }
 }
@@ -112,7 +111,7 @@ fn main() {
             ..default()
         }))
         // Inspector
-        .add_plugins(WorldInspectorPlugin::new())
+        .add_plugins((EguiPlugin::default(), WorldInspectorPlugin::new()))
         // Bevy Save
         .add_plugins(SavePlugins)
         // Register types

@@ -12,11 +12,17 @@ use bevy::{
         BoundingVolume,
         IntersectsVolume,
     },
+    platform::time::Instant,
     prelude::*,
-    utils::Instant,
 };
-use bevy_inspector_egui::quick::WorldInspectorPlugin;
-use bevy_save::prelude::*;
+use bevy_inspector_egui::{
+    bevy_egui::EguiPlugin,
+    quick::WorldInspectorPlugin,
+};
+use bevy_save::{
+    prelude::*,
+    reflect::checkpoint::Checkpoints,
+};
 
 // These constants are defined in `Transform` units.
 // Using the default 2D camera they correspond 1:1 with screen pixels.
@@ -85,6 +91,7 @@ fn main() {
         .add_systems(Update, (update_scoreboard, close_on_esc))
         .add_plugins((
             // Inspector
+            EguiPlugin::default(),
             WorldInspectorPlugin::new(),
             // Bevy Save
             SavePlugins,
@@ -216,7 +223,7 @@ struct Score(usize);
 #[reflect(Component)]
 struct ScoreboardUi;
 
-#[derive(Reflect)]
+#[derive(Reflect, Default)]
 struct PaddlePrefab {
     position: f32,
 }
@@ -236,7 +243,7 @@ impl Prefab for PaddlePrefab {
         ));
     }
 
-    fn extract(builder: SnapshotBuilder) -> SnapshotBuilder {
+    fn extract(builder: BuilderRef) -> BuilderRef {
         builder.extract_prefab(|entity| {
             Some(PaddlePrefab {
                 position: entity.get::<Transform>()?.translation.x,
@@ -248,12 +255,24 @@ impl Prefab for PaddlePrefab {
 #[derive(Reflect)]
 struct BallPrefab {
     position: Vec3,
+    velocity: Vec2,
+}
+
+impl Default for BallPrefab {
+    fn default() -> Self {
+        Self {
+            position: BALL_STARTING_POSITION,
+            velocity: INITIAL_BALL_DIRECTION.normalize() * BALL_SPEED,
+        }
+    }
 }
 
 impl Prefab for BallPrefab {
     type Marker = Ball;
 
     fn spawn(self, target: Entity, world: &mut World) {
+        // Some entities will need initialization from world state, such as mesh assets.
+        // We can do that here.
         let mesh = world.resource_mut::<Assets<Mesh>>().add(Circle::default());
         let material = world
             .resource_mut::<Assets<ColorMaterial>>()
@@ -265,14 +284,17 @@ impl Prefab for BallPrefab {
             Transform::from_translation(self.position)
                 .with_scale(Vec2::splat(BALL_DIAMETER).extend(1.)),
             Ball,
-            Velocity(INITIAL_BALL_DIRECTION.normalize() * BALL_SPEED),
+            Velocity(self.velocity),
         ));
     }
 
-    fn extract(builder: SnapshotBuilder) -> SnapshotBuilder {
+    fn extract(builder: BuilderRef) -> BuilderRef {
+        // We don't actually need to save all of those runtime components.
+        // Only save the translation and velocity of the Ball.
         builder.extract_prefab(|entity| {
             Some(BallPrefab {
                 position: entity.get::<Transform>()?.translation,
+                velocity: entity.get::<Velocity>()?.0,
             })
         })
     }
@@ -301,7 +323,7 @@ impl Prefab for BrickPrefab {
         ));
     }
 
-    fn extract(builder: SnapshotBuilder) -> SnapshotBuilder {
+    fn extract(builder: BuilderRef) -> BuilderRef {
         builder.extract_prefab(|entity| {
             let position = entity.get::<Transform>()?.translation;
 
@@ -322,13 +344,10 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(CollisionSound(ball_collision_sound));
 
     // Paddle
-
-    commands.spawn_prefab(PaddlePrefab { position: 0.0 });
+    commands.spawn_prefab(PaddlePrefab::default());
 
     // Ball
-    commands.spawn_prefab(BallPrefab {
-        position: BALL_STARTING_POSITION,
-    });
+    commands.spawn_prefab(BallPrefab::default());
 
     // Scoreboard
     commands
@@ -464,7 +483,7 @@ fn check_for_collisions(
 
         if let Some(collision) = collision {
             // Sends a collision event so that other systems can react to the collision
-            collision_events.send_default();
+            collision_events.write_default();
 
             // Bricks should be despawned and increment the scoreboard on collision
             if maybe_brick.is_some() {
@@ -596,7 +615,7 @@ fn setup_entity_count(mut commands: Commands, asset_server: Res<AssetServer>) {
 }
 
 fn update_entity_count(entities: Query<Entity>, mut counters: Query<&mut Text, With<EntityCount>>) {
-    let mut text = counters.single_mut();
+    let mut text = counters.single_mut().unwrap();
     text.0 = format!("Entities: {:?}", entities.iter().len());
 }
 
@@ -631,7 +650,7 @@ struct Toaster<'w, 's> {
 impl Toaster<'_, '_> {
     fn show(&mut self, text: &str) {
         for entity in &self.toasts {
-            self.commands.entity(entity).despawn_recursive();
+            self.commands.entity(entity).despawn();
         }
 
         self.commands.spawn((
@@ -665,13 +684,13 @@ impl Pipeline for BreakoutPipeline {
         "examples/saves/breakout"
     }
 
-    fn capture(&self, builder: SnapshotBuilder) -> Snapshot {
+    fn capture(&self, builder: BuilderRef) -> Snapshot {
         builder
             .extract_all_prefabs::<PaddlePrefab>()
             .extract_all_prefabs::<BallPrefab>()
             .extract_all_prefabs::<BrickPrefab>()
             .extract_resource::<Score>()
-            .extract_checkpoints()
+            .extract_resource::<Checkpoints>()
             .build()
     }
 
@@ -696,22 +715,22 @@ fn handle_save_input(world: &mut World) {
     let mut text = None;
 
     if keys.just_released(KeyCode::Space) {
-        world.checkpoint(BreakoutPipeline);
+        world.checkpoint(&BreakoutPipeline);
         text = Some("Checkpoint");
     } else if keys.just_released(KeyCode::Enter) {
-        world.save(BreakoutPipeline).expect("Failed to save");
+        world.save(&BreakoutPipeline).expect("Failed to save");
         text = Some("Save");
     } else if keys.just_released(KeyCode::Backspace) {
-        world.load(BreakoutPipeline).expect("Failed to load");
+        world.load(&BreakoutPipeline).expect("Failed to load");
         text = Some("Load");
     } else if keys.just_released(KeyCode::KeyA) {
         world
-            .rollback(BreakoutPipeline, 1)
+            .rollback(&BreakoutPipeline, 1)
             .expect("Failed to rollback");
         text = Some("Rollback");
     } else if keys.just_released(KeyCode::KeyD) {
         world
-            .rollback(BreakoutPipeline, -1)
+            .rollback(&BreakoutPipeline, -1)
             .expect("Failed to rollforward");
         text = Some("Rollforward");
     }

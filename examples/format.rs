@@ -4,15 +4,18 @@ use std::io::{
 };
 
 use bevy::prelude::*;
-use bevy_inspector_egui::quick::WorldInspectorPlugin;
+use bevy_inspector_egui::{
+    bevy_egui::EguiPlugin,
+    quick::WorldInspectorPlugin,
+};
 use bevy_save::{
-    prelude::*,
     Error,
+    prelude::*,
 };
 use io_adapters::WriteExtension;
 use serde::{
-    de::DeserializeSeed,
     Serialize,
+    de::DeserializeSeed,
 };
 
 pub struct RONFormat;
@@ -54,17 +57,23 @@ impl Pipeline for RONPipeline {
         "examples/saves/format"
     }
 
-    fn capture(&self, builder: SnapshotBuilder) -> Snapshot {
+    fn capture(&self, builder: BuilderRef) -> Snapshot {
         builder
             .allow::<Transform>()
             .allow::<ExampleComponent>()
-            .extract_all_entities()
+            // This is just one way to prevent extracting the camera.
+            // Instead of using this match, you could use a marker component
+            // and only extract entities with that marker component.
+            .extract_entities_matching(|e| !e.contains::<Camera>())
             .clear_empty()
             .build()
     }
 
     fn apply(&self, world: &mut World, snapshot: &Snapshot) -> Result<(), Error> {
-        snapshot.apply(world)
+        snapshot
+            .applier(world)
+            .despawn::<(With<Transform>, Without<Camera>)>()
+            .apply()
     }
 }
 
@@ -82,12 +91,20 @@ fn setup(mut commands: Commands) {
         float: 64.0,
         string: "Hello, world!".into(),
     }));
+    commands.spawn(Camera2d);
 }
 
-fn extract(mut commands: Commands) {
-    commands.save(RONPipeline);
-}
+fn handle_save_input(world: &mut World) {
+    let keys = world.resource::<ButtonInput<KeyCode>>();
 
+    if keys.just_released(KeyCode::Enter) {
+        info!("Saving data");
+        world.save(&RONPipeline).expect("Failed to save");
+    } else if keys.just_released(KeyCode::Backspace) {
+        info!("Loading data");
+        world.load(&RONPipeline).expect("Failed to load");
+    }
+}
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.build().set(AssetPlugin {
@@ -95,12 +112,13 @@ fn main() {
             ..default()
         }))
         // Inspector
-        .add_plugins(WorldInspectorPlugin::new())
+        .add_plugins((EguiPlugin::default(), WorldInspectorPlugin::new()))
         // Bevy Save
         .add_plugins(SavePlugins)
         // Register types
         .register_type::<ExampleComponent>()
         // Systems
-        .add_systems(Startup, (setup, extract))
+        .add_systems(Startup, setup)
+        .add_systems(Update, handle_save_input)
         .run();
 }
