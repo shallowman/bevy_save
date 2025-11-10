@@ -45,13 +45,12 @@ bevy_sprite = ["bevy/bevy_sprite"]
 brotli = ["dep:brotli"]
 
 [workspace.dependencies]
-bevy = { version = "0.16.1", default-features = false }
-bevy_macro_utils = "0.16.1"
+bevy = { path = "../../bevy_engine", default-features = false }
+bevy_macro_utils = {path = "../../bevy_engine/crates/bevy_macro_utils"}
 bevy_save_macros = { version = "3.0.0", path = "crates/bevy_save_macros" }
 variadics_please = { version = "1.1" }
 
 [dependencies]
-bevy = { path = "../../bevy_engine" }
 bevy.workspace = true
 bevy_save_macros.workspace = true
 variadics_please.workspace = true
